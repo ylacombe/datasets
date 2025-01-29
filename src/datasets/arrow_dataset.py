@@ -1105,7 +1105,7 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
         # Here `del` is used to del the pyarrow tables. This properly closes the files used for memory mapped tables
         self.__del__()
 
-    def save_to_disk(self, dataset_path: str, fs=None):
+    def save_to_disk(self, dataset_path: str, fs=None, num_proc: Optional[int] = None,):
         """
         Saves a dataset to a dataset directory, or in a filesystem using either :class:`~filesystems.S3FileSystem` or
         any implementation of ``fsspec.spec.AbstractFileSystem``.
@@ -1137,6 +1137,8 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
                 of the dataset directory where the dataset will be saved to.
             fs (:class:`~filesystems.S3FileSystem`, ``fsspec.spec.AbstractFileSystem``, optional, defaults ``None``):
                 Instance of the remote filesystem used to download the files from.
+            num_proc (:obj:`int`, optional): Number of processes for multiprocessing, when flattening the indices. By default it doesn't
+                use multiprocessing.
 
         Example:
 
@@ -1147,7 +1149,7 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
         if self.list_indexes():
             raise ValueError("please remove all the indexes using `dataset.drop_index` before saving a dataset")
 
-        dataset = self.flatten_indices() if self._indices is not None else self
+        dataset = self.flatten_indices(num_proc=num_proc) if self._indices is not None else self
 
         if is_remote_filesystem(fs):
             dataset_path = extract_path_from_uri(dataset_path)
@@ -1396,7 +1398,7 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
             return (self._indices.num_rows, self._data.num_columns)
         return self._data.shape
 
-    def unique(self, column: str) -> List:
+    def unique(self, column: str, num_proc: Optional[int] = None,) -> List:
         """Return a list of the unique elements in a column.
 
         This is implemented in the low-level backend and as such, very fast.
@@ -1420,7 +1422,7 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
             raise ValueError(f"Column ({column}) not in table columns ({self._data.column_names}).")
 
         if self._indices is not None and self._indices.num_rows != self._data.num_rows:
-            dataset = self.flatten_indices()
+            dataset = self.flatten_indices(num_proc=num_proc)
         else:
             dataset = self
 
@@ -3008,6 +3010,7 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
         features: Optional[Features] = None,
         disable_nullable: bool = False,
         new_fingerprint: Optional[str] = None,
+        num_proc: Optional[int] = None,
     ) -> "Dataset":
         """Create and cache a new Dataset by flattening the indices mapping.
 
@@ -3023,6 +3026,8 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
             disable_nullable (:obj:`bool`, default `False`): Allow null values in the table.
             new_fingerprint (:obj:`str`, optional, default `None`): The new fingerprint of the dataset after transform.
                 If `None`, the new fingerprint is computed using a hash of the previous fingerprint, and the transform arguments
+            num_proc (:obj:`int`, optional): Number of processes for multiprocessing. By default it doesn't
+                use multiprocessing.
         """
 
         return self.map(
@@ -3034,6 +3039,7 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
             disable_nullable=disable_nullable,
             new_fingerprint=new_fingerprint,
             desc="Flattening the indices",
+            num_proc=num_proc,
         )
 
     def _new_dataset_with_indices(
@@ -4436,7 +4442,7 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
 
     @transmit_format
     @fingerprint_transform(inplace=False)
-    def add_column(self, name: str, column: Union[list, np.array], new_fingerprint: str):
+    def add_column(self, name: str, column: Union[list, np.array], new_fingerprint: str, num_proc: Optional[int] = None):
         """Add column to Dataset.
 
         *New in version 1.7.*
@@ -4444,6 +4450,8 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
         Args:
             name (str): Column name.
             column (list or np.array): Column data to be added.
+            num_proc (:obj:`int`, optional): Number of processes for multiprocessing, when flattening the indices. By default it doesn't
+                use multiprocessing.
 
         Returns:
             :class:`Dataset`
@@ -4463,7 +4471,7 @@ class Dataset(DatasetInfoMixin, IndexableMixin, TensorflowDatasetMixin):
         """
         column_table = InMemoryTable.from_pydict({name: column})
         _check_column_names(self._data.column_names + column_table.column_names)
-        dataset = self.flatten_indices() if self._indices is not None else self
+        dataset = self.flatten_indices(num_proc=num_proc) if self._indices is not None else self
         # Concatenate tables horizontally
         table = concat_tables([dataset._data, column_table], axis=1)
         # Update features
@@ -4809,6 +4817,7 @@ def _concatenate_map_style_datasets(
     info: Optional[DatasetInfo] = None,
     split: Optional[NamedSplit] = None,
     axis: int = 0,
+    num_proc: Optional[int] = None,
 ):
     """
     Converts a list of :class:`Dataset` with the same schema into a single :class:`Dataset`.
@@ -4823,6 +4832,8 @@ def _concatenate_map_style_datasets(
             (horizontally).
 
             *New in version 1.6.0*
+        num_proc (:obj:`int`, optional): Number of processes for multiprocessing, when flattening the indices. By default it doesn't
+            use multiprocessing.
 
     Example:
 
@@ -4887,7 +4898,7 @@ def _concatenate_map_style_datasets(
                 indices_table = dsets[0]._indices
             else:
                 for i in range(len(dsets)):
-                    dsets[i] = dsets[i].flatten_indices()
+                    dsets[i] = dsets[i].flatten_indices(num_proc=num_proc)
                 indices_table = None
     else:
         indices_table = None
@@ -4925,6 +4936,7 @@ def _interleave_map_style_datasets(
     info: Optional[DatasetInfo] = None,
     split: Optional[NamedSplit] = None,
     stopping_strategy: Optional[str] = "first_exhausted",
+    num_proc: Optional[int] = 0,
     **kwargs,
 ) -> "Dataset":
     """
@@ -4947,6 +4959,8 @@ def _interleave_map_style_datasets(
             Note that if the strategy is `all_exhausted`, the interleaved dataset size can get enormous:
             - with no probabilities, the resulting dataset will have max_length_datasets*nb_dataset samples.
             - with given probabilities, the resulting dataset will have more samples if some datasets have really low probability of visiting.
+        num_proc (:obj:`int`, optional): Number of processes for multiprocessing, only when flattening the indices. By default it doesn't
+            use multiprocessing.
         **kwargs (additional keyword arguments): Keyword arguments to be passed to :meth:`datasets.Datasets.select` when selecting the indices used to interleave the datasets.
 
     Output:
@@ -4958,7 +4972,7 @@ def _interleave_map_style_datasets(
         )
 
     # To interleave the datasets, we concatenate them and then we re-order the indices
-    concatenated_datasets = _concatenate_map_style_datasets(datasets, info=info, split=split)
+    concatenated_datasets = _concatenate_map_style_datasets(datasets, info=info, split=split, num_proc=num_proc)
 
     # Let's now build the indices to pass to .select()
     lengths = [len(dset) for dset in datasets]

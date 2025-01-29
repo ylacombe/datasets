@@ -138,6 +138,7 @@ def concatenate_datasets(
     info: Optional[DatasetInfo] = None,
     split: Optional[NamedSplit] = None,
     axis: int = 0,
+    num_proc: Optional[int] = 0,
 ):
     """
     Converts a list of :class:`Dataset` with the same schema into a single :class:`Dataset`.
@@ -151,6 +152,8 @@ def concatenate_datasets(
             (horizontally).
 
             *New in version 1.6.0*
+        num_proc (:obj:`int`, optional): Number of processes for multiprocessing, used for `Datasets` and only when flattening the indices. By default it doesn't
+            use multiprocessing.
 
     Example:
 
@@ -173,6 +176,6 @@ def concatenate_datasets(
                 f"Unable to concatenate a {type(dsets[0])} with a {type(dataset)}. Expected a list of Dataset objects or a list of IterableDataset objects."
             )
     if map_style:
-        return _concatenate_map_style_datasets(dsets, info=info, split=split, axis=axis)
+        return _concatenate_map_style_datasets(dsets, info=info, split=split, axis=axis, num_proc=num_proc)
     else:
         return _concatenate_iterable_datasets(dsets, info=info, split=split, axis=axis)
